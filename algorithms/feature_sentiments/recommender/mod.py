@@ -9,7 +9,7 @@ import copy
 
 from algorithms.feature_sentiments.types import CategoryDetail, ItemSentiment, PreferenceConfigure, RecommendationResult, TradeoffDirection, TradeoffPair, UtilityPreference
 
-class FeatureSentimentsRecommender():
+class FSRecommender():
   def __init__(
       self,
       attributes: list[str],

@@ -76,3 +76,18 @@ class RecommendationResult:
   top_item_id: str
   category_details: list[CategoryDetail]
   item_id_to_tradeoff_vector: dict[str, list[TradeoffPair]]
+  
+@dataclass
+class FSItemReview:
+  item_id: str
+  user_id: str
+  review_text: str
+  
+@dataclass
+class FSExtractSentimentsRequest:
+  reviews: list[FSItemReview]
+  attributes: list[str]
+@dataclass
+class FSExtractSentimentsResult:
+  item_id: str
+  item_sentiments: list[ItemSentiment]

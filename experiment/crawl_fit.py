@@ -42,22 +42,8 @@ for course in courses:
         # escape single quotes for SQL
         name_vn = name_vn.replace("'", "''")
 
-        extra_data = { # type: ignore
-            "source": "FS",
-            "itemSentiments": [
-                {
-                    "attribute": attr,
-                    "sentimentScore": round(random.uniform(1.0, 5.0), 1),
-                }
-                for attr in ATTRIBUTES
-            ],
-        }
-
-        extra_data_json = json.dumps(extra_data, ensure_ascii=False)
-        extra_data_json = extra_data_json.replace("'", "''")
-
         values.append(
-            f"('{ma_mh}', '{name_vn}', '{extra_data_json}')"
+            f"('{ma_mh}', '{name_vn}')"
         )
 
 sql_lines.append(",\n".join(values) + ";")
