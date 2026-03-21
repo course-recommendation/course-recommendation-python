@@ -218,5 +218,7 @@ __marimo__/
 .DS_Store
 
 experiment/output/*
+!experiment/output/.gitkeep
 
 algorithms/feature_sentiments/extract_sentiments/resources/*
+!algorithms/feature_sentiments/extract_sentiments/resources/.gitkeep
