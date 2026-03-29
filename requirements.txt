@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic
+pandas
+mlxtend
+nltk
+textblob
+python-dotenv
+openai
+requests
