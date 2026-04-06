@@ -11,4 +11,4 @@ pip3 install -r requirements.txt
 ```
 
 ## Start app
-`uvicorn api.mod:app`
+uvicorn api.mod:app
