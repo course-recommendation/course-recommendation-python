@@ -1,0 +1,57 @@
+name: Build Application
+
+on:
+  workflow_call:
+
+jobs:
+  build-ai:
+    runs-on: ubuntu-22.04
+    env:
+      PROJECT_NAME: courserecom
+      APP_NAME: ai
+    name: Build AI App
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Azure CLI Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID_TERRAFORM }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set ACR name
+        shell: bash
+        run: |
+            echo "ACR_NAME=acr${{ env.PROJECT_NAME }}" >> $GITHUB_ENV
+      - name: Log in to Azure Container Registry
+        shell: bash
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.ACR_NAME }}.azurecr.io/${{ env.APP_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/${{ env.APP_NAME }}:latest
+          cache-to: type=inline
+
+      - name: Clean up untagged images
+        shell: bash
+        run: |
+          # Delete untagged (dangling) manifests
+          az acr manifest list-metadata --name ${{ env.APP_NAME }} --registry ${{ env.ACR_NAME }} \
+            --query "[?tags[0]==null].digest" -o tsv \
+            | xargs -I% az acr repository delete --name ${{ env.ACR_NAME }} --image ${{ env.APP_NAME }}@% --yes
