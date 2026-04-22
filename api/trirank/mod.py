@@ -1,4 +1,3 @@
-
 from api.mod import app
 from cornac.models import TriRank
 from cornac.data import Dataset
@@ -8,15 +7,26 @@ import os
 from typing import List, Tuple, Optional
 import copy
 from pydantic import BaseModel
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from dotenv import load_dotenv
+load_dotenv()
 
-model = None
-train_set = None
+# MODEL_PATH = os.getenv("MODEL_PATH")
+# TRAIN_SET_PATH = os.getenv("TRAIN_SET_PATH")
+MODEL_PATH = "./model.pkl"
+TRAIN_SET_PATH = "./model.pkl.trainset"
 
-MODEL_PATH = os.getenv("MODEL_PATH")
-TRAIN_SET_PATH = os.getenv("TRAIN_SET_PATH")
+blob_service_client = BlobServiceClient.from_connection_string(os.getenv("AZURE_STORAGE_CONNECTION_STRING"))
+container_name = "container"
+container_client = blob_service_client.get_container_client(container= container_name) 
 
-model: TriRank = None
-train_set: Dataset = None
+print("\nDownloading blob to " + MODEL_PATH)
+with open(file=MODEL_PATH, mode="wb") as download_file:
+ download_file.write(container_client.download_blob("model.pkl").readall())
+
+print("\nDownloading blob to " + TRAIN_SET_PATH)
+with open(file=TRAIN_SET_PATH, mode="wb") as download_file:
+ download_file.write(container_client.download_blob("model.pkl.trainset").readall())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
