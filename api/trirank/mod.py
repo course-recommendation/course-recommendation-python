@@ -79,7 +79,6 @@ async def topk_aspect_of_item(item_id: str, k: int):
                         for i in range(len(aspect_score_of_item))]
   aspect_name_and_score_of_item.sort(reverse=True, key=lambda x: x[1])
   top_k_name_and_score_of_item = aspect_name_and_score_of_item[:k]
-  print(top_k_name_and_score_of_item)
   return top_k_name_and_score_of_item
 
 @app.get("/trirank/score-of-aspect-to-user")
@@ -87,5 +86,4 @@ async def score_of_aspect_to_user(uid: str, aspect_name: str):
   user_idx = train_set.uid_map.get(uid)
   aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name)
   aspect_score_of_user_to_aspect = model.Y[user_idx, aspect_idx]
-  print(aspect_score_of_user_to_aspect)
   return aspect_score_of_user_to_aspect
