@@ -224,3 +224,4 @@ algorithms/feature_sentiments/extract_sentiments/resources/*
 !algorithms/feature_sentiments/extract_sentiments/resources/.gitkeep
 
 **pkl**
+sentiment.txt

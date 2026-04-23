@@ -55,3 +55,27 @@ jobs:
           az acr manifest list-metadata --name ${{ env.APP_NAME }} --registry ${{ env.ACR_NAME }} \
             --query "[?tags[0]==null].digest" -o tsv \
             | xargs -I% az acr repository delete --name ${{ env.ACR_NAME }} --image ${{ env.APP_NAME }}@% --yes
+  
+  build-and-push-trirank:
+    runs-on: ubuntu-22.04
+    name: Build and push Trirank model and trainset to Azure Blob Storage
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.14
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build TriRank model and upload to Azure Blob Storage
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          python trirank.py
+          python upload_trirank.py
