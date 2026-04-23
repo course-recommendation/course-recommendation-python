@@ -33,4 +33,5 @@ jobs:
               --image acr${{ env.PROJECT_NAME }}.azurecr.io/${{ env.APP_NAME }}:latest \
               --replace-env-vars \
                 TIMESTAMP=$(date +%s) \
-                OPENAI_API_KEY=secretref:openai-api-key
+                OPENAI_API_KEY=secretref:openai-api-key \
+                AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-connection-string
