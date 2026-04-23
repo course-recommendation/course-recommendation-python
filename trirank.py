@@ -18,6 +18,7 @@ import cornac
 from cornac.datasets import amazon_toy
 from cornac.data import SentimentModality
 from cornac.eval_methods import RatioSplit
+import os
 
 
 # Load rating and sentiment information
@@ -46,3 +47,14 @@ trirank = cornac.models.TriRank(
 trirank.fit(eval_method.train_set)
 
 trirank.save(save_dir="save_dir", save_trainset=True)
+
+save_dir = "save_dir/TriRank"
+new_name = "model"
+
+for filename in os.listdir(save_dir):
+    # Strip known extensions to get the base name
+    base = filename.replace(".pkl.trainset", "").replace(".pkl.meta", "").replace(".pkl", "")
+    if base != new_name and base != filename:  # it's a generated timestamp name
+        new_filename = filename.replace(base, new_name)
+        os.rename(os.path.join(save_dir, filename), os.path.join(save_dir, new_filename))
+        print(f"Renamed: {filename} -> {new_filename}")
