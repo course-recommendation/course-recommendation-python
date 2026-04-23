@@ -20,20 +20,20 @@ blob_service_client = BlobServiceClient.from_connection_string(os.getenv("AZURE_
 container_name = "container"
 container_client = blob_service_client.get_container_client(container= container_name) 
 
-print("\nDownloading blob to " + MODEL_PATH)
-with open(file=MODEL_PATH, mode="wb") as download_file:
- download_file.write(container_client.download_blob("model.pkl").readall())
-
-print("\nDownloading blob to " + TRAIN_SET_PATH)
-with open(file=TRAIN_SET_PATH, mode="wb") as download_file:
- download_file.write(container_client.download_blob("model.pkl.trainset").readall())
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model, train_set
 
     if not MODEL_PATH or not TRAIN_SET_PATH:
         raise ValueError("MODEL_PATH and TRAIN_SET_PATH must be set")
+
+    print("\nDownloading blob to " + MODEL_PATH)
+    with open(file=MODEL_PATH, mode="wb") as download_file:
+        download_file.write(container_client.download_blob("model.pkl").readall())
+
+    print("\nDownloading blob to " + TRAIN_SET_PATH)
+    with open(file=TRAIN_SET_PATH, mode="wb") as download_file:
+        download_file.write(container_client.download_blob("model.pkl.trainset").readall())
     
     model = TriRank.load(MODEL_PATH)
     train_set = Dataset.load(TRAIN_SET_PATH)
