@@ -13,13 +13,13 @@ pip3 install -r requirements.txt
 ## Set environment variables
 Fill in the .env file following `.env.example`.
 
-## Start app
-```
-uvicorn api.mod:app
-```
-
-## Build and upload trirank to Azure Blob Storage (if not already done)
+## Build and upload trirank to Azure Blob Storage (optional)
 ```
 python3 trirank.py
 python3 upload_trirank.py
+```
+
+## Start app
+```
+uvicorn api.mod:app
 ```
