@@ -33,4 +33,3 @@ jobs:
               --image acr${{ env.PROJECT_NAME }}.azurecr.io/${{ env.APP_NAME }}:latest \
               --set-env-vars \
                 TIMESTAMP=$(date +%s) \
-
