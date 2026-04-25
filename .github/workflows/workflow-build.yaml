@@ -80,7 +80,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build TriRank model and upload to Azure Blob Storage
+      - name: Build TriRank model
         run: |
           python trirank.py
+
+      - name: Upload TriRank model and trainset to Azure Blob Storage
+        run: |
           python upload_trirank.py
