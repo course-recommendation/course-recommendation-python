@@ -13,6 +13,11 @@ pip3 install -r requirements.txt
 ## Set environment variables
 Fill in the .env file following `.env.example`.
 
+## Login to Azure
+```
+az login
+```
+
 ## Build and upload trirank to Azure Blob Storage (optional)
 ```
 python3 trirank.py
