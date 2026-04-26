@@ -47,14 +47,15 @@ class RecommendationRequest(BaseModel):
     uid: str
     k: int
     preferences: Optional[List[Tuple[str, float]]] = None
+    remove_seen: Optional[bool] = False
 @app.post("/trirank/recommendation")
 async def get_recommendation(req: RecommendationRequest):
     uid = req.uid
     k = req.k
     preferences = req.preferences
-
+    remove_seen = req.remove_seen
     if not preferences:
-        response = model.recommend(user_id=uid, k=k)
+        response = model.recommend(user_id=uid, k=k, remove_seen=remove_seen, train_set=train_set)
         return {"recommendations": response}
 
     temp_model = copy.copy(model)
@@ -68,7 +69,7 @@ async def get_recommendation(req: RecommendationRequest):
             continue
         temp_model.Y[user_idx, aspect_idx] = score
 
-    response = temp_model.recommend(user_id=uid, k=k)
+    response = temp_model.recommend(user_id=uid, k=k, remove_seen=remove_seen, train_set=train_set)
     return {"recommendations": response}
 
 @app.get("/trirank/topk-aspect-of-item")
