@@ -15,15 +15,38 @@
 """TriRank: Review-aware Explainable Recommendation by Modeling Aspects"""
 
 import cornac
-from cornac.datasets import amazon_toy
 from cornac.data import SentimentModality
+from cornac.data import Reader
 from cornac.eval_methods import RatioSplit
 import os
-
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from azure.identity import DefaultAzureCredential
 
 # Load rating and sentiment information
-rating = amazon_toy.load_feedback()
-sentiment = amazon_toy.load_sentiment()
+storage_account_name = "stcourserecom"
+container_name = "dataset"
+account_url = f"https://{storage_account_name}.blob.core.windows.net"
+default_credential = DefaultAzureCredential()
+blob_service_client = BlobServiceClient(account_url, credential=default_credential)
+container_client = blob_service_client.get_container_client(container= container_name)
+
+RATING_PATH = "./dataset/trirank/rating.txt"
+SENTIMENT_PATH = "./dataset/trirank/sentiment.txt"
+
+os.makedirs(os.path.dirname(RATING_PATH), exist_ok=True)
+os.makedirs(os.path.dirname(SENTIMENT_PATH), exist_ok=True)
+
+print("\nDownloading blob to " + RATING_PATH)
+with open(file=RATING_PATH, mode="wb") as download_file:
+    download_file.write(container_client.download_blob("rating.txt").readall())
+
+print("\nDownloading blob to " + SENTIMENT_PATH)
+with open(file=SENTIMENT_PATH, mode="wb") as download_file:
+    download_file.write(container_client.download_blob("sentiment.txt").readall())
+
+reader = Reader()
+rating = reader.read(RATING_PATH, fmt='UIR', sep=',')
+sentiment = reader.read(SENTIMENT_PATH, fmt='UITup', sep=',', tup_sep=':')
 
 # Instantiate a SentimentModality, it makes it convenient to work with sentiment information
 md = SentimentModality(data=sentiment)

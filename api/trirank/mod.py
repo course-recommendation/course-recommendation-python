@@ -9,25 +9,22 @@ import copy
 from pydantic import BaseModel
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from azure.identity import DefaultAzureCredential
-from dotenv import load_dotenv
-load_dotenv()
 
-MODEL_PATH = "./model.pkl"
-TRAIN_SET_PATH = "./model.pkl.trainset"
+MODEL_PATH = "./model/trirank/model.pkl"
+TRAIN_SET_PATH = "./model/trirank/model.pkl.trainset"
+os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+os.makedirs(os.path.dirname(TRAIN_SET_PATH), exist_ok=True)
 
 storage_account_name = "stcourserecom"
+container_name = "model"
 account_url = f"https://{storage_account_name}.blob.core.windows.net"
 default_credential = DefaultAzureCredential()
 blob_service_client = BlobServiceClient(account_url, credential=default_credential)
-container_name = "container"
 container_client = blob_service_client.get_container_client(container= container_name) 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model, train_set
-
-    if not MODEL_PATH or not TRAIN_SET_PATH:
-        raise ValueError("MODEL_PATH and TRAIN_SET_PATH must be set")
 
     print("\nDownloading blob to " + MODEL_PATH)
     with open(file=MODEL_PATH, mode="wb") as download_file:

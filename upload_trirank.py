@@ -1,8 +1,6 @@
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from azure.identity import DefaultAzureCredential
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 storage_account_name = "stcourserecom"
 account_url = f"https://{storage_account_name}.blob.core.windows.net"
@@ -10,7 +8,7 @@ default_credential = DefaultAzureCredential()
 blob_service_client = BlobServiceClient(account_url, credential=default_credential)
 
 # Create a container if it does not exist
-container_name = "container"
+container_name = "model"
 container_client = blob_service_client.get_container_client(container_name)
 if not container_client.exists():
     container_client.create_container()
