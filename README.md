@@ -26,5 +26,5 @@ python3 upload_trirank.py
 
 ## Start app
 ```
-uvicorn api.mod:app
+python3 -m uvicorn api.mod:app
 ```
