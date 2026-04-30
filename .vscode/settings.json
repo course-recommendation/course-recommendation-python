@@ -1,7 +1,7 @@
 {
-  "python.analysis.typeCheckingMode": "basic",
-  "python.analysis.autoImportCompletions": true,
-  "cSpell.words": [
-    "Sentires"
-  ]
+	"python.analysis.typeCheckingMode": "basic",
+	"python.analysis.autoImportCompletions": true,
+	"cSpell.words": ["Sentires"],
+	"python-envs.defaultEnvManager": "ms-python.python:venv",
+	"python-envs.defaultPackageManager": "ms-python.python:pip"
 }
