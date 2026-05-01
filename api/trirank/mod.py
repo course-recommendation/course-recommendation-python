@@ -58,11 +58,11 @@ async def get_recommendation(req: RecommendationRequest):
     temp_model = copy.copy(model)
     temp_model.Y = model.Y.copy()
 
-    user_idx = train_set.uid_map.get(uid)
+    user_idx = train_set.uid_map.get(uid, -1)
 
     for aspect_name, score in preferences:
-        aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name)
-        if aspect_idx is None:
+        aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name, -1)
+        if aspect_idx == -1:
             continue
         temp_model.Y[user_idx, aspect_idx] = score
 
@@ -71,7 +71,7 @@ async def get_recommendation(req: RecommendationRequest):
 
 @app.get("/trirank/topk-aspect-of-item")
 async def topk_aspect_of_item(item_id: str, k: int):
-  item_idx = train_set.iid_map.get(item_id)
+  item_idx = train_set.iid_map.get(item_id, -1)
   aspect_score_of_item = model.X[item_idx].toarray().squeeze()
   id_to_aspect = {idx: name for name, idx in train_set.sentiment.aspect_id_map.items()}
 
@@ -83,7 +83,7 @@ async def topk_aspect_of_item(item_id: str, k: int):
 
 @app.get("/trirank/score-of-aspect-to-user")
 async def score_of_aspect_to_user(uid: str, aspect_name: str):
-  user_idx = train_set.uid_map.get(uid)
-  aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name)
+  user_idx = train_set.uid_map.get(uid, -1)
+  aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name, -1)
   aspect_score_of_user_to_aspect = model.Y[user_idx, aspect_idx]
   return aspect_score_of_user_to_aspect
