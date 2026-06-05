@@ -40,7 +40,7 @@ class TradeoffPair:
   @staticmethod
   def decode(encoded: str) -> "TradeoffPair":
     try:
-      attribute, direction_value = encoded.split(":")
+      attribute, direction_value = encoded.rsplit(":", 1)
       direction = TradeoffDirection(str(direction_value))
     except (ValueError, KeyError) as e:
       raise ValueError(
