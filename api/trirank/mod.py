@@ -1,4 +1,5 @@
 from api.mod import app
+from api.trirank.scrutable import ScrutableTriRank, to_scrutable
 from cornac.models import TriRank
 from cornac.data import Dataset
 from contextlib import asynccontextmanager
@@ -22,7 +23,7 @@ default_credential = DefaultAzureCredential()
 blob_service_client = BlobServiceClient(account_url, credential=default_credential)
 container_client = blob_service_client.get_container_client(container=container_name)
 
-tenant_id_to_model: Dict[int, TriRank] = {}
+tenant_id_to_model: Dict[int, ScrutableTriRank] = {}
 tenant_id_to_train_set: Dict[int, Dataset] = {}
 
 def _load_model_from_blob(tenant_id: int):
@@ -39,7 +40,7 @@ def _load_model_from_blob(tenant_id: int):
     with open(file=trainset_path, mode="wb") as f:
         f.write(container_client.download_blob(trainset_blob).readall())
 
-    tenant_id_to_model[tenant_id] = TriRank.load(model_path)
+    tenant_id_to_model[tenant_id] = to_scrutable(TriRank.load(model_path))
     tenant_id_to_train_set[tenant_id] = Dataset.load(trainset_path)
 
 @asynccontextmanager
@@ -80,15 +81,17 @@ async def get_recommendation(req: RecommendationRequest):
         return {"recommendations": response}
 
     temp_model = copy.copy(model)
-    temp_model.Y = model.Y.copy()
-
-    user_idx = train_set.uid_map.get(req.uid, -1)
+    temp_model.a0_overrides = {}
 
     for aspect_name, score in req.preferences:
         aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name, -1)
         if aspect_idx == -1:
             continue
-        temp_model.Y[user_idx, aspect_idx] = score
+        # Map the incoming [1, 5] preference scale to a [0, 1] weight so it
+        # is comparable to the L1-normalized aspect preference vector (a_0)
+        # instead of an out-of-range raw value.
+        weight = min(max(score, 0), 5) / 5.0
+        temp_model.a0_overrides[aspect_idx] = weight
 
     response = temp_model.recommend(user_id=req.uid, k=req.k, remove_seen=req.remove_seen, train_set=train_set)
     return {"recommendations": response}
