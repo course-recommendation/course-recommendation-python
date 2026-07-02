@@ -69,6 +69,27 @@ class RecommendationRequest(BaseModel):
     preferences: Optional[List[Tuple[str, float]]] = None
     remove_seen: Optional[bool] = False
 
+# Preference scale bounds and the curve used to convert a raw [MIN_SCORE,
+# MAX_SCORE] preference into an a0_overrides weight in [0, 1].
+#
+# A linear mapping (score / MAX_SCORE) treats every one-point step as
+# equally significant, so a 4 vs 5 choice barely differs from a 1 vs 2
+# choice. Using an exponential curve instead makes higher scores pull
+# away from lower ones multiplicatively: each +1 on the scale multiplies
+# the weight by PREFERENCE_CURVE_BASE, so with base=2.0 a score of 5 ends
+# up 2**4 = 16x the weight of a score of 1, rather than just 5x.
+# Tune PREFERENCE_CURVE_BASE to taste: 1.0 reduces to linear, higher
+# values (e.g. 3.0) make only the top of the scale matter at all.
+MIN_SCORE = 1.0
+MAX_SCORE = 5.0
+PREFERENCE_CURVE_BASE = 3.0
+
+def _score_to_weight(score: float) -> float:
+    score = min(max(score, MIN_SCORE), MAX_SCORE)
+    exponent = score - MIN_SCORE
+    max_exponent = MAX_SCORE - MIN_SCORE
+    return (PREFERENCE_CURVE_BASE ** exponent) / (PREFERENCE_CURVE_BASE ** max_exponent)
+
 @app.post("/trirank/recommendation")
 async def get_recommendation(req: RecommendationRequest):
     model = tenant_id_to_model.get(req.tenant_id)
@@ -87,11 +108,10 @@ async def get_recommendation(req: RecommendationRequest):
         aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name, -1)
         if aspect_idx == -1:
             continue
-        # Map the incoming [1, 5] preference scale to a [0, 1] weight so it
-        # is comparable to the L1-normalized aspect preference vector (a_0)
-        # instead of an out-of-range raw value.
-        weight = min(max(score, 0), 5) / 5.0
-        temp_model.a0_overrides[aspect_idx] = weight
+        # Map the incoming [1, 5] preference scale to a [0, 1] weight,
+        # non-linearly so higher choices dominate lower ones instead of
+        # scaling proportionally. See _score_to_weight for the curve.
+        temp_model.a0_overrides[aspect_idx] = _score_to_weight(score)
 
     response = temp_model.recommend(user_id=req.uid, k=req.k, remove_seen=req.remove_seen, train_set=train_set)
     return {"recommendations": response}
