@@ -19,14 +19,39 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 storage_account_name = "stcourserecom"
 container_name = "model"
 account_url = f"https://{storage_account_name}.blob.core.windows.net"
-default_credential = DefaultAzureCredential()
-blob_service_client = BlobServiceClient(account_url, credential=default_credential)
-container_client = blob_service_client.get_container_client(container=container_name)
 
 tenant_id_to_model: Dict[int, ScrutableTriRank] = {}
 tenant_id_to_train_set: Dict[int, Dataset] = {}
 
+_container_client: Optional[ContainerClient] = None
+
+def _get_container_client() -> ContainerClient:
+    """Lazily create (and cache) the blob container client.
+
+    Credential/network errors (e.g. missing `az login` when running
+    locally) are only surfaced here, at the point of use, rather than at
+    import time or app startup.
+    """
+    global _container_client
+    if _container_client is None:
+        try:
+            credential = DefaultAzureCredential()
+            blob_service_client = BlobServiceClient(account_url, credential=credential)
+            _container_client = blob_service_client.get_container_client(container=container_name)
+            # Force a lightweight call so auth failures surface immediately
+            # instead of lazily on some later, unrelated call.
+            _container_client.get_container_properties()
+        except Exception as e:
+            _container_client = None
+            raise RuntimeError(
+                "Azure Blob Storage is unavailable. If running locally, make sure "
+                f"you are authenticated (e.g. run `az login`). Original error: {e}"
+            ) from e
+    return _container_client
+
 def _load_model_from_blob(tenant_id: int):
+    container_client = _get_container_client()
+
     model_blob = f"{tenant_id}.model.pkl"
     trainset_blob = f"{tenant_id}.model.pkl.trainset"
     model_path = os.path.join(MODEL_DIR, model_blob)
@@ -45,19 +70,23 @@ def _load_model_from_blob(tenant_id: int):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    blobs = container_client.list_blobs()
-    tenant_ids = set()
-    for blob in blobs:
-        name = blob.name
-        if name.endswith(".model.pkl"):
-            prefix = name[: -len(".model.pkl")]
-            if prefix.isdigit():
-                tenant_ids.add(int(prefix))
-    for tenant_id in tenant_ids:
-        try:
-            _load_model_from_blob(tenant_id)
-        except Exception as e:
-            print(f"[trirank] failed to load model for tenant {tenant_id}: {e}")
+    try:
+        container_client = _get_container_client()
+        blobs = container_client.list_blobs()
+        tenant_ids = set()
+        for blob in blobs:
+            name = blob.name
+            if name.endswith(".model.pkl"):
+                prefix = name[: -len(".model.pkl")]
+                if prefix.isdigit():
+                    tenant_ids.add(int(prefix))
+        for tenant_id in tenant_ids:
+            try:
+                _load_model_from_blob(tenant_id)
+            except Exception as e:
+                print(f"[trirank] failed to load model for tenant {tenant_id}: {e}")
+    except Exception as e:
+        print(f"[trirank] skipping startup model preload, Azure Blob Storage unavailable: {e}")
     yield
 
 app.router.lifespan_context = lifespan
@@ -148,7 +177,10 @@ class ReloadRequest(BaseModel):
 
 @app.post("/trirank/reload")
 async def reload_model(req: ReloadRequest):
-    _load_model_from_blob(req.tenant_id)
+    try:
+        _load_model_from_blob(req.tenant_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return {"status": "model reloaded", "tenant_id": req.tenant_id}
 
 class TrainRequest(BaseModel):
@@ -172,5 +204,8 @@ async def _run_training(tenant_id: str):
             print(f"[trirank train] {script} failed:\n{stderr.decode()}")
             return
         print(f"[trirank train] {script} succeeded:\n{stdout.decode()}")
-    _load_model_from_blob(tenant_id)
-    print(f"[trirank train] model reloaded for tenant {tenant_id}")
+    try:
+        _load_model_from_blob(tenant_id)
+        print(f"[trirank train] model reloaded for tenant {tenant_id}")
+    except Exception as e:
+        print(f"[trirank train] failed to reload model for tenant {tenant_id}: {e}")

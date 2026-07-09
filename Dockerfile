@@ -9,6 +9,11 @@
 ARG PYTHON_VERSION=3.14.2
 FROM python:${PYTHON_VERSION}-slim AS base
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    curl -fsSL 'https://azurecliprod.blob.core.windows.net/$root/deb_install.sh' | bash
+
+
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
 
