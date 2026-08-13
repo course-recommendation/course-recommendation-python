@@ -20,7 +20,8 @@ class RecommendationRequest(BaseModel):
 class RefinedRecommendationRequest(BaseModel):
   attributes: list[str]
   item_id_to_item_sentiments: dict[str, list[ItemSentiment]]
-  #: The item the user endorsed, whose sentiments become the new targets.
+  #: The item the user endorsed. Eq. (8) refines the preference model from the
+  #: category alone, so this is kept only to stay compatible with the caller.
   item_id: str
   item_tradeoff_vector: list[TradeoffPair]
   category: list[TradeoffPair]

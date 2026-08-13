@@ -17,14 +17,13 @@ class FSRecommender():
     MIN_PREFERENCE_SCORE = 1.0
     MAX_PREFERENCE_SCORE = 5.0
 
-    #: Eq. (6) tradeoff values. The paper assigns the higher one to an improved (↑)
-    #: attribute, but our attributes are bipolar axes where neither pole is better,
-    #: so a lean is only a pro when it moves towards the user's target.
-    TOWARDS_TARGET_TRADEOFF_VALUE = 0.75
-    AWAY_FROM_TARGET_TRADEOFF_VALUE = 0.25
+    #: Eq. (6) tradeoff values, for an improved (↑) and a compromised (↓) attribute.
+    IMPROVED_TRADEOFF_VALUE = 0.75
+    COMPROMISED_TRADEOFF_VALUE = 0.25
 
-    #: Weight given to an attribute the user endorsed by asking for similar items.
-    ENDORSED_WEIGHT = 5.0
+    #: Eq. (8) weights, applied to the attributes named by the endorsed category.
+    IMPROVED_WEIGHT = 5.0
+    COMPROMISED_WEIGHT = 1.0
 
     def __init__(
         self,
@@ -51,7 +50,7 @@ class FSRecommender():
         top_item_id = max(item_id_to_utility, key=item_id_to_utility.__getitem__)
 
         item_id_to_tradeoff_vector = {
-            item_id: self._get_tradeoff_vector_of_item(item_id, top_item_id)
+            item_id: self._get_tradeoff_vector_of_item(item_id, top_item_id, attribute_to_utility_preference)
             for item_id in item_ids
             if item_id != top_item_id
         }
@@ -64,7 +63,6 @@ class FSRecommender():
             item_id_to_utility,
             item_id_to_tradeoff_vector,
             frequent_tradeoff_subsets,
-            self._get_sentiments_of_item(top_item_id),
         )
 
         return RecommendationResult(
@@ -85,44 +83,27 @@ class FSRecommender():
         old_attribute_to_preference_configure: dict[str, PreferenceConfigure],
         category: list[TradeoffPair],
         item_tradeoff_vector: list[TradeoffPair],
-        item_id: str,
-        item_id_to_item_sentiments: dict[str, list[ItemSentiment]],
     ) -> dict[str, PreferenceConfigure]:
         """Eq. (8): fold "show me items like this one" back into the preference model.
 
-        The paper only raises the weight of the category's improved attributes and
-        drops that of the compromised ones, which works because there ↑ already means
-        better, so a heavier weight is enough to chase it. On a bipolar axis the
-        weight carries no direction at all - the preference function peaks at the
-        user's target whichever way the item leaned - so raising it alone would make
-        the recommender pursue the *old* target harder, the opposite of the lean the
-        user just endorsed.
+        Weight up the attributes the endorsed category improved on and weight down
+        the ones it compromised. Since ↑ means the item sits closer to the user's
+        target on that axis, chasing that target harder does pull the next round
+        towards items like the endorsed one - which is what the paper's rule buys.
 
-        Instead we move the target onto the endorsed item's own position on every axis
-        named by the category, which is what "similar to this one" actually means, and
-        treat all of those attributes as endorsed rather than demoting the
-        low-leaning half of them.
+        The α term of Eq. (8) has no counterpart here: our attributes carry a
+        sentiment score only, never a static specification value.
         """
         result = copy.deepcopy(old_attribute_to_preference_configure)
 
         if not set(category).issubset(item_tradeoff_vector):
             raise ValueError("The provided tradeoff vector does not belong to the category")
 
-        item_sentiments = {s.attribute: s.sentiment_score for s in item_id_to_item_sentiments[item_id]}
-        min_sentiment_score, max_sentiment_score = cls._sentiment_score_range(item_id_to_item_sentiments)
-        # A flat sentiment range leaves no axis to move a target along.
-        can_retarget = max_sentiment_score != min_sentiment_score
-
         for tradeoff_pair in category:
-            preference_configure = result[tradeoff_pair.attribute]
-            preference_configure.weight = cls.ENDORSED_WEIGHT
-
-            if can_retarget and tradeoff_pair.attribute in item_sentiments:
-                preference_configure.target_sentiment_score = cls._unscale_sentiment_score(
-                    item_sentiments[tradeoff_pair.attribute],
-                    min_sentiment_score,
-                    max_sentiment_score,
-                )
+            result[tradeoff_pair.attribute].weight = (
+                cls.IMPROVED_WEIGHT if tradeoff_pair.is_improved()
+                else cls.COMPROMISED_WEIGHT
+            )
 
         return result
 
@@ -149,22 +130,6 @@ class FSRecommender():
         return min_sentiment + (score - cls.MIN_PREFERENCE_SCORE) * (max_sentiment - min_sentiment) / (
             cls.MAX_PREFERENCE_SCORE - cls.MIN_PREFERENCE_SCORE
         )
-
-    @classmethod
-    def _unscale_sentiment_score(cls, sentiment: float, min_sentiment: float, max_sentiment: float) -> float:
-        """Inverse of _scale_preference_score.
-
-        Targets are stored on the user-facing [1, 5] preference scale, so a sentiment
-        read off a real item has to be mapped back before it can become a target.
-        """
-        if max_sentiment == min_sentiment:
-            raise ValueError("cannot unscale a sentiment when every item scores the same")
-
-        score = cls.MIN_PREFERENCE_SCORE + (sentiment - min_sentiment) * (
-            cls.MAX_PREFERENCE_SCORE - cls.MIN_PREFERENCE_SCORE
-        ) / (max_sentiment - min_sentiment)
-
-        return min(cls.MAX_PREFERENCE_SCORE, max(cls.MIN_PREFERENCE_SCORE, score))
 
     def _build_attribute_to_utility_preference(self) -> dict[str, UtilityPreference]:
         min_sentiment_score, max_sentiment_score = self._sentiment_score_range(self.item_id_to_item_sentiments)
@@ -205,20 +170,47 @@ class FSRecommender():
     def _get_sentiments_of_item(self, item_id: str) -> dict[str, float]:
         return {s.attribute: s.sentiment_score for s in self.item_id_to_item_sentiments[item_id]}
 
-    def _get_tradeoff_vector_of_item(self, item_id: str, top_item_id: str) -> list[TradeoffPair]:
+    def _get_tradeoff_vector_of_item(
+        self,
+        item_id: str,
+        top_item_id: str,
+        attribute_to_utility_preference: dict[str, UtilityPreference],
+    ) -> list[TradeoffPair]:
+        """Eq. (4): ↑ where the item is better than the top candidate, ↓ where worse.
+
+        The paper compares raw sentiments because its ↑ rides on a "the higher, the
+        better" default. Ours is a bipolar axis, so better means a higher preference
+        value V(senti) = 1 - |senti - target| / 4. That function is strictly
+        decreasing in the distance to the target, so V(senti(p')) > V(senti(p)) is
+        exactly |senti(p') - target| < |senti(p) - target| - which is the comparison
+        made here, and which correctly reads an item that overshoots far past the
+        target as compromised rather than improved.
+        """
         top_sentiments = self._get_sentiments_of_item(top_item_id)
 
-        return [
-            TradeoffPair(
+        result: list[TradeoffPair] = []
+
+        for s in self.item_id_to_item_sentiments[item_id]:
+            if s.attribute not in top_sentiments:
+                continue
+
+            target_sentiment_score = attribute_to_utility_preference[s.attribute].target_sentiment_score
+            item_gap = abs(s.sentiment_score - target_sentiment_score)
+            top_gap = abs(top_sentiments[s.attribute] - target_sentiment_score)
+
+            # Eq. (4) leaves the tie undefined, and it is a genuine tie here: two
+            # scores sitting either side of the target at the same distance match it
+            # equally well. Calling that an improvement would put a claim in the
+            # category's explanation that the item does not back up.
+            if item_gap == top_gap:
+                continue
+
+            result.append(TradeoffPair(
                 attribute=s.attribute,
-                direction=TradeoffDirection.O_UP if s.sentiment_score > top_sentiments[s.attribute] else TradeoffDirection.O_DOWN,
-            )
-            for s in self.item_id_to_item_sentiments[item_id]
-            # Eq. (4) only defines a tradeoff for a strict difference. Reading an equal
-            # score as a lean would claim a pole the item does not lean towards, which
-            # the explanation then states outright.
-            if s.attribute in top_sentiments and s.sentiment_score != top_sentiments[s.attribute]
-        ]
+                direction=TradeoffDirection.O_UP if item_gap < top_gap else TradeoffDirection.O_DOWN,
+            ))
+
+        return result
 
     def _build_frequent_tradeoff_subsets(
         self,
@@ -261,30 +253,11 @@ class FSRecommender():
             if self._is_item_belong_to_category(item_id, category, item_id_to_tradeoff_vector)
         ]
 
-    def _tradeoff_value(
-        self,
-        tradeoff_pair: TradeoffPair,
-        top_sentiments: dict[str, float],
-        attribute_to_utility_preference: dict[str, UtilityPreference],
-    ) -> float:
-        """Eq. (6)'s tradeoff_i: whether this lean counts as a pro or a con.
-
-        The paper reads ↑ as improved, which only holds on an axis that has a good
-        end. Our axes are bipolar, so leaning high is not a benefit in itself; what
-        makes a lean a pro is that it moves off the top candidate *towards* the user's
-        target on that axis, and a con that it moves away.
-        """
-        target_sentiment_score = attribute_to_utility_preference[tradeoff_pair.attribute].target_sentiment_score
-        top_sentiment_score = top_sentiments[tradeoff_pair.attribute]
-
-        towards_target = (
-            target_sentiment_score > top_sentiment_score if tradeoff_pair.leans_high()
-            else target_sentiment_score < top_sentiment_score
-        )
-
+    def _tradeoff_value(self, tradeoff_pair: TradeoffPair) -> float:
+        """Eq. (6)'s tradeoff_i: whether this attribute counts as a pro or a con."""
         return (
-            self.TOWARDS_TARGET_TRADEOFF_VALUE if towards_target
-            else self.AWAY_FROM_TARGET_TRADEOFF_VALUE
+            self.IMPROVED_TRADEOFF_VALUE if tradeoff_pair.is_improved()
+            else self.COMPROMISED_TRADEOFF_VALUE
         )
 
     def _compute_tradeoff_benefit_of_category(
@@ -294,11 +267,9 @@ class FSRecommender():
         attribute_to_utility_preference: dict[str, UtilityPreference],
         item_id_to_utility: dict[str, float],
         item_id_to_tradeoff_vector: dict[str, list[TradeoffPair]],
-        top_sentiments: dict[str, float],
     ) -> float:
         first_term = sum(
-            attribute_to_utility_preference[tp.attribute].weight
-            * self._tradeoff_value(tp, top_sentiments, attribute_to_utility_preference)
+            attribute_to_utility_preference[tp.attribute].weight * self._tradeoff_value(tp)
             for tp in category
         )
 
@@ -330,11 +301,9 @@ class FSRecommender():
         attribute_to_utility_preference: dict[str, UtilityPreference],
         item_id_to_utility: dict[str, float],
         item_id_to_tradeoff_vector: dict[str, list[TradeoffPair]],
-        top_sentiments: dict[str, float],
     ) -> float:
         return self._compute_tradeoff_benefit_of_category(
-            category, item_ids, attribute_to_utility_preference, item_id_to_utility, item_id_to_tradeoff_vector,
-            top_sentiments
+            category, item_ids, attribute_to_utility_preference, item_id_to_utility, item_id_to_tradeoff_vector
         ) * self._compute_diversity_of_category(
             category, selected_categories, item_ids, item_id_to_tradeoff_vector
         )
@@ -346,7 +315,6 @@ class FSRecommender():
         item_id_to_utility: dict[str, float],
         item_id_to_tradeoff_vector: dict[str, list[TradeoffPair]],
         frequent_tradeoff_subsets: list[list[TradeoffPair]],
-        top_sentiments: dict[str, float],
     ) -> list[list[TradeoffPair]]:
         result: list[list[TradeoffPair]] = []
 
@@ -358,13 +326,11 @@ class FSRecommender():
 
             if not result:
                 best = max(candidates, key=lambda c: self._compute_tradeoff_benefit_of_category(
-                    c, item_ids, attribute_to_utility_preference, item_id_to_utility, item_id_to_tradeoff_vector,
-                    top_sentiments
+                    c, item_ids, attribute_to_utility_preference, item_id_to_utility, item_id_to_tradeoff_vector
                 ))
             else:
                 best = max(candidates, key=lambda c: self._compute_fc(
-                    c, result, item_ids, attribute_to_utility_preference, item_id_to_utility, item_id_to_tradeoff_vector,
-                    top_sentiments
+                    c, result, item_ids, attribute_to_utility_preference, item_id_to_utility, item_id_to_tradeoff_vector
                 ))
 
             result.append(best)

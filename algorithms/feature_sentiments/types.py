@@ -19,6 +19,12 @@ class UtilityPreference:
 
 
 class TradeoffDirection(Enum):
+  """Eq. (4)'s ↑ / ↓, i.e. improved / compromised against the top candidate.
+
+  The "UP"/"DOWN" wording is historical: these values are stored verbatim in
+  persisted recommendation results, so they keep their old spelling even though
+  they no longer mean "leans towards the high pole". See TradeoffPair.
+  """
   V_UP = "V_UP"
   V_DOWN = "V_DOWN"
   O_UP = "O_UP"
@@ -26,19 +32,20 @@ class TradeoffDirection(Enum):
 
 @dataclass(frozen=True)
 class TradeoffPair:
-  """Where an item sits on one attribute axis relative to the top candidate.
+  """Whether an item is better or worse than the top candidate on one attribute.
 
-  The attributes are bipolar descriptive axes ("Lý thuyết" at score 1, "Thực
-  hành" at score 5): neither pole is better, so a direction only says which pole
-  the item leans towards, never that it improved. What makes a lean a pro or a
-  con is whether it moves towards the user's target - see
-  FSRecommender._tradeoff_value.
+  Eq. (4) reads ↑ off `senti_i(p') > senti_i(p)`, which is only "better" because
+  the paper's attributes default to "the higher, the better". Ours are bipolar
+  descriptive axes ("Lý thuyết" at score 1, "Thực hành" at score 5) whose
+  preference function V peaks at the user's target, so better means a higher
+  V - equivalently, a smaller distance to that target. See
+  FSRecommender._get_tradeoff_vector_of_item.
   """
   attribute: str
   direction: TradeoffDirection
 
   def __repr__(self) -> str:
-    return f'{self.attribute} {"higher" if self.leans_high() else "lower"}'
+    return f'{self.attribute} {"improved" if self.is_improved() else "compromised"}'
 
   @staticmethod
   def encode(tradeoff: 'TradeoffPair') -> str:
@@ -58,12 +65,12 @@ class TradeoffPair:
         direction=direction
     )
 
-  def leans_high(self):
-    """Whether the item sits closer to the score-5 pole than the top candidate."""
+  def is_improved(self):
+    """Whether the item sits closer to the user's target than the top candidate."""
     return self.direction == TradeoffDirection.O_UP or self.direction == TradeoffDirection.V_UP
 
-  def leans_low(self):
-    return not self.leans_high()
+  def is_compromised(self):
+    return not self.is_improved()
 
 @dataclass
 class PreferenceConfigure:

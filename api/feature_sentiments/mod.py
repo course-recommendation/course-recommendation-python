@@ -31,9 +31,7 @@ async def get_refined_recommendation(payload: RefinedRecommendationRequest) -> S
   attribute_to_preference_configure = FSRecommender.generate_refined_preference_configure(
     payload.old_attribute_to_preference_configure,
     payload.category,
-    payload.item_tradeoff_vector,
-    payload.item_id,
-    payload.item_id_to_item_sentiments
+    payload.item_tradeoff_vector
   )
   
   recommender = FSRecommender(
