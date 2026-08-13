@@ -95,17 +95,21 @@ class RecommendationRequest(BaseModel):
     tenant_id: int
     uid: str
     k: int
-    # (aspect_name, weight) pairs with weight already in [0, 1]. Callers own the
+    # (aspect_name, weight) pairs with weight already in [-1, 1]. Callers own the
     # mapping from whatever scale their UI uses onto aspect weights, because they
     # are also the ones who decide the aspect vocabulary when building the
     # training data - see the backend's TriRankAspects. This endpoint used to
     # accept a raw 1-5 score and apply an exponential curve to it, which both
     # duplicated that knowledge and, being monotonic, could only ever express
     # "I care about this aspect more", never "I want the opposite end of it".
+    # A negative weight penalizes items carrying the aspect, which is how the
+    # rejected pole of a bipolar axis is expressed.
     preferences: Optional[List[Tuple[str, float]]] = None
     remove_seen: Optional[bool] = False
     # Weight of the review-derived prior when blending in `preferences`.
     a0_prior_weight: Optional[float] = None
+    # Weight of the aspect fitting constraint; higher enforces `preferences` harder.
+    eta_A: Optional[float] = None
 
 @app.post("/trirank/recommendation")
 async def get_recommendation(req: RecommendationRequest):
@@ -122,6 +126,8 @@ async def get_recommendation(req: RecommendationRequest):
     temp_model.a0_overrides = {}
     if req.a0_prior_weight is not None:
         temp_model.a0_prior_weight = req.a0_prior_weight
+    if req.eta_A is not None:
+        temp_model.eta_A = req.eta_A
 
     unknown_aspects = []
     for aspect_name, weight in req.preferences:
@@ -129,7 +135,7 @@ async def get_recommendation(req: RecommendationRequest):
         if aspect_idx == -1:
             unknown_aspects.append(aspect_name)
             continue
-        temp_model.a0_overrides[aspect_idx] = min(max(float(weight), 0.0), 1.0)
+        temp_model.a0_overrides[aspect_idx] = min(max(float(weight), -1.0), 1.0)
 
     # An aspect name the model has never seen used to be skipped silently, so a
     # model trained against an older aspect vocabulary would quietly ignore every

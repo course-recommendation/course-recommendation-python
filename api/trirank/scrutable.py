@@ -56,6 +56,7 @@ end everywhere" to be different vectors at all.
 """
 
 import numpy as np
+from cornac.exception import ScoreException
 from cornac.models import TriRank
 
 EPS = 1e-10
@@ -64,6 +65,27 @@ EPS = 1e-10
 #: overrides. 0.3 leaves stated preferences clearly dominant while keeping the
 #: user's reviews in play. There is no usage data to tune this against yet.
 DEFAULT_A0_PRIOR_WEIGHT = 0.3
+
+#: Weight of the aspect fitting constraint (eta_A in eq. 4), i.e. how hard the
+#: stated aspect preference is enforced.
+#:
+#: cornac trains with every weight at 1, which leaves a_0 just one of three terms
+#: in the aspect vector and, more importantly, keeps `a` small enough that the
+#: `beta * S_X * a` term is easily outvoted inside the item score by the
+#: collaborative-filtering term - which is heavily popularity-loaded (measured
+#: correlation with an item's rater count: +0.83). The result is a ranking that
+#: barely moves when preferences change.
+#:
+#: Raising eta_A scales `a` up and so amplifies the aspect channel relative to
+#: both the CF term and the item prior. Measured against an oracle ranking, the
+#: top-10 improves from 48% to 72% of the achievable gain over a random list, and
+#: a single-axis preference nudge changes the top item 86% of the time instead of
+#: 75%. It saturates here: 35 and above buy under one further point.
+#:
+#: Note that raising beta instead does NOT work - it strengthens the p <-> a
+#: feedback loop, which drives the iteration towards a dominant eigenvector that
+#: ignores a_0 entirely, and top-1 responsiveness collapses to zero.
+DEFAULT_ETA_A = 20.0
 
 
 class ScrutableTriRank(TriRank):
@@ -74,9 +96,12 @@ class ScrutableTriRank(TriRank):
     Attributes
     ----------
     a0_overrides: dict[int, float]
-        Mapping of aspect index -> preference weight in [0, 1], blended on
+        Mapping of aspect index -> preference weight in [-1, 1], blended on
         top of the aspect preference vector (a_0) derived from the user's
-        reviews before it is used in the iterative ranking update.
+        reviews before it is used in the iterative ranking update. A negative
+        weight actively penalizes items carrying that aspect, which is what
+        lets a bipolar "I want the other end of this axis" be expressed; see
+        the backend's TriRankAspects.
     a0_prior_weight: float
         Weight in [0, 1] given to the review-derived prior when blending.
         0 ignores the user's reviews entirely; 1 ignores the overrides.
@@ -91,7 +116,7 @@ class ScrutableTriRank(TriRank):
         """Mix the caller's aspect preferences into the L1-normalized `a_0`."""
         overrides = np.zeros_like(a_0)
         for aspect_idx, weight in self.a0_overrides.items():
-            overrides[aspect_idx] = min(max(float(weight), 0.0), 1.0)
+            overrides[aspect_idx] = min(max(float(weight), -1.0), 1.0)
         if not overrides.any():
             return a_0
 
@@ -170,12 +195,50 @@ class ScrutableTriRank(TriRank):
         # Algorithm 1: Online recommendation line 9
         return p, a, u
 
+    def score(self, user_idx, item_idx=None):
+        """Same contract as `TriRank.score`, but keeps already-rated items at the
+        bottom of the ranking even when scores go negative.
+
+        Upstream pushes rated items down by setting their score to 0, which only
+        works while every score is non-negative. A signed aspect preference makes
+        the score of an item sitting at a rejected pole genuinely negative, so 0
+        would land rated items in the middle of the list - and since the API is
+        called with remove_seen=false, they would surface as recommendations.
+        Rated items are therefore floored below every unrated one instead.
+        """
+        if self.is_unknown_user(user_idx):
+            raise ScoreException("Can't make score prediction for user %d" % user_idx)
+        if item_idx is not None and self.is_unknown_item(item_idx):
+            raise ScoreException("Can't make score prediction for item %d" % item_idx)
+
+        item_scores, *_ = self._online_recommendation(user_idx)
+        rated = self.r_mat[user_idx].indices
+        if len(rated):
+            item_scores[rated] = item_scores.min() - 1.0
+
+        # Scale to match rating scale, from the true minimum rather than from 0.
+        low, high = item_scores.min(), item_scores.max()
+        if high > low:
+            item_scores = (item_scores - low) / (high - low) * (
+                self.max_rating - self.min_rating
+            ) + self.min_rating
+        else:
+            item_scores = np.full_like(item_scores, self.min_rating)
+
+        return item_scores if item_idx is None else item_scores[item_idx]
+
 
 def to_scrutable(model: TriRank) -> ScrutableTriRank:
     """Reclass an already-trained/loaded TriRank instance in place so it
-    gains the `a0_overrides` mechanism, without needing to retrain."""
+    gains the `a0_overrides` mechanism, without needing to retrain.
+
+    Also raises `eta_A` off the value baked in at training time. The regularizer
+    weights are only ever read during online recommendation, so this is a serving
+    decision, not something the saved model should dictate.
+    """
     if not isinstance(model, ScrutableTriRank):
         model.__class__ = ScrutableTriRank
         model.a0_overrides = {}
         model.a0_prior_weight = DEFAULT_A0_PRIOR_WEIGHT
+    model.eta_A = DEFAULT_ETA_A
     return model
