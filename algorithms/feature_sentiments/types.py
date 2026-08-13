@@ -13,6 +13,9 @@ class ItemSentiment:
 class UtilityPreference:
   weight: float
   preference_function: Callable[[float], float]
+  #: The target the preference function peaks at, in sentiment space (i.e. after
+  #: FSRecommender._scale_preference_score).
+  target_sentiment_score: float
 
 
 class TradeoffDirection(Enum):
@@ -23,15 +26,19 @@ class TradeoffDirection(Enum):
 
 @dataclass(frozen=True)
 class TradeoffPair:
+  """Where an item sits on one attribute axis relative to the top candidate.
+
+  The attributes are bipolar descriptive axes ("Lý thuyết" at score 1, "Thực
+  hành" at score 5): neither pole is better, so a direction only says which pole
+  the item leans towards, never that it improved. What makes a lean a pro or a
+  con is whether it moves towards the user's target - see
+  FSRecommender._tradeoff_value.
+  """
   attribute: str
   direction: TradeoffDirection
 
   def __repr__(self) -> str:
-    better = self.direction in (
-        TradeoffDirection.V_UP,
-        TradeoffDirection.O_UP,
-    )
-    return f'{"better" if better else "worse"} {self.attribute}'
+    return f'{self.attribute} {"higher" if self.leans_high() else "lower"}'
 
   @staticmethod
   def encode(tradeoff: 'TradeoffPair') -> str:
@@ -51,11 +58,12 @@ class TradeoffPair:
         direction=direction
     )
 
-  def improved(self):
+  def leans_high(self):
+    """Whether the item sits closer to the score-5 pole than the top candidate."""
     return self.direction == TradeoffDirection.O_UP or self.direction == TradeoffDirection.V_UP
 
-  def compromised(self):
-    return not self.improved()
+  def leans_low(self):
+    return not self.leans_high()
 
 @dataclass
 class PreferenceConfigure:

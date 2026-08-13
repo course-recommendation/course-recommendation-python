@@ -28,10 +28,12 @@ async def get_recommendation(payload: RecommendationRequest) -> ServerRecommenda
 @app.post("/fs/recommendation/refined")
 async def get_refined_recommendation(payload: RefinedRecommendationRequest) -> ServerRecommendationResult:
   
-  attribute_to_preference_configure = FSRecommender.generate_refined_preference_weights(
+  attribute_to_preference_configure = FSRecommender.generate_refined_preference_configure(
     payload.old_attribute_to_preference_configure,
     payload.category,
-    payload.item_tradeoff_vector
+    payload.item_tradeoff_vector,
+    payload.item_id,
+    payload.item_id_to_item_sentiments
   )
   
   recommender = FSRecommender(
