@@ -1,5 +1,5 @@
-"""TriRank variant that supports scrutable, per-request aspect preference
-overrides without mutating the shared graph structure (R, X, Y).
+"""TriRank variant supporting scrutable, per-request aspect preference overrides
+without mutating the shared graph structure (R, X, Y).
 
 Background
 ----------
@@ -25,12 +25,34 @@ into `self.Y[user_idx, aspect_idx]` is incorrect for two reasons:
    "graph edge weight" role (Algorithm 1, step 4) that the paper keeps
    separate.
 
-`ScrutableTriRank` fixes this by keeping `self.Y` untouched and instead
-letting callers supply `a0_overrides`: a `{aspect_idx: weight}` mapping
-where `weight` is already normalized to [0, 1]. The override is merged
-into `a_0` *after* it has been L1-normalized from `self.Y[user]`, and the
-vector is renormalized afterwards so it remains a valid preference
-distribution.
+`ScrutableTriRank` keeps `self.Y` untouched and instead lets callers supply
+`a0_overrides`: an `{aspect_idx: weight}` mapping with weights already in
+[0, 1].
+
+Blending rather than overwriting
+--------------------------------
+An earlier version of this class wrote the overrides into the already
+L1-normalized `a_0` and then renormalized. That has two problems:
+
+1. It *replaces* whatever the user's reviews said about an overridden
+   aspect instead of combining the two, so an aspect the caller happens to
+   send with weight 0 silently erases the evidence from `self.Y`.
+2. L1 normalization cancels any uniform scaling, so a preference vector
+   that is flat - every aspect requested equally - renormalizes to exactly
+   the same thing no matter what level it was sent at. Measured on the real
+   dataset, "every aspect at the minimum" and "every aspect at the maximum"
+   produced byte-identical `a_0` and an identical ranking for all 179
+   items.
+
+So the override vector is now normalized on its own and mixed with the
+review-derived prior at `a0_prior_weight`, which keeps both signals present
+and makes the mixing ratio an explicit, tunable quantity rather than an
+accident of normalization.
+
+Note that (2) is only fully fixed in combination with a bipolar aspect
+vocabulary on the caller's side: the two poles of an axis have to be
+*distinct aspects* for "I want the low end everywhere" and "I want the high
+end everywhere" to be different vectors at all.
 """
 
 import numpy as np
@@ -38,23 +60,47 @@ from cornac.models import TriRank
 
 EPS = 1e-10
 
+#: Default weight of the review-derived prior when blending in explicit
+#: overrides. 0.3 leaves stated preferences clearly dominant while keeping the
+#: user's reviews in play. There is no usage data to tune this against yet.
+DEFAULT_A0_PRIOR_WEIGHT = 0.3
+
 
 class ScrutableTriRank(TriRank):
     """TriRank variant that lets callers inject an explicit aspect
-    preference override for a single online recommendation call, without
-    mutating the shared Y matrix used for graph smoothing.
+    preference for a single online recommendation call, without mutating the
+    shared Y matrix used for graph smoothing.
 
     Attributes
     ----------
     a0_overrides: dict[int, float]
-        Mapping of aspect index -> preference weight in [0, 1]. Applied on
+        Mapping of aspect index -> preference weight in [0, 1], blended on
         top of the aspect preference vector (a_0) derived from the user's
         reviews before it is used in the iterative ranking update.
+    a0_prior_weight: float
+        Weight in [0, 1] given to the review-derived prior when blending.
+        0 ignores the user's reviews entirely; 1 ignores the overrides.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.a0_overrides: dict[int, float] = {}
+        self.a0_prior_weight: float = DEFAULT_A0_PRIOR_WEIGHT
+
+    def _blend_aspect_preference(self, a_0):
+        """Mix the caller's aspect preferences into the L1-normalized `a_0`."""
+        overrides = np.zeros_like(a_0)
+        for aspect_idx, weight in self.a0_overrides.items():
+            overrides[aspect_idx] = min(max(float(weight), 0.0), 1.0)
+        if not overrides.any():
+            return a_0
+
+        overrides /= np.linalg.norm(overrides, 1)
+        prior_weight = min(max(float(self.a0_prior_weight), 0.0), 1.0)
+        blended = prior_weight * a_0 + (1.0 - prior_weight) * overrides
+        if blended.any():
+            blended /= np.linalg.norm(blended, 1)
+        return blended
 
     def _online_recommendation(self, user):
         # Algorithm 1: Online recommendation line 5
@@ -73,14 +119,8 @@ class ScrutableTriRank(TriRank):
         if u_0.any():
             u_0 /= np.linalg.norm(u_0, 1)
 
-        # Merge in explicit user overrides (already normalized to [0, 1])
-        # on the same scale as the L1-normalized a_0, then renormalize so
-        # the result remains a valid L1 preference vector.
         if self.a0_overrides:
-            for aspect_idx, weight in self.a0_overrides.items():
-                a_0[aspect_idx] = weight
-            if a_0.any():
-                a_0 /= np.linalg.norm(a_0, 1)
+            a_0 = self._blend_aspect_preference(a_0)
 
         # Algorithm 1: Online recommendation line 7
         p = self.p.copy()
@@ -110,7 +150,12 @@ class ScrutableTriRank(TriRank):
             a = (
                 self.gamma / a_denominator * self.Y.T * u
                 + self.beta / a_denominator * self.X.T * p
-                + self.eta_P / a_denominator * a_0
+                # eq. 4 weights the aspect fitting term by eta_A, not eta_P.
+                # Upstream cornac uses eta_P here; with every weight at the
+                # default of 1 the two coincide, which is why it goes
+                # unnoticed, but it makes eta_A - the one knob for how hard
+                # the stated aspect preference is enforced - a no-op.
+                + self.eta_A / a_denominator * a_0
             ).squeeze()
 
             if (self.max_iter > 0 and inc > self.max_iter) or (
@@ -132,4 +177,5 @@ def to_scrutable(model: TriRank) -> ScrutableTriRank:
     if not isinstance(model, ScrutableTriRank):
         model.__class__ = ScrutableTriRank
         model.a0_overrides = {}
+        model.a0_prior_weight = DEFAULT_A0_PRIOR_WEIGHT
     return model

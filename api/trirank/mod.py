@@ -95,29 +95,17 @@ class RecommendationRequest(BaseModel):
     tenant_id: int
     uid: str
     k: int
+    # (aspect_name, weight) pairs with weight already in [0, 1]. Callers own the
+    # mapping from whatever scale their UI uses onto aspect weights, because they
+    # are also the ones who decide the aspect vocabulary when building the
+    # training data - see the backend's TriRankAspects. This endpoint used to
+    # accept a raw 1-5 score and apply an exponential curve to it, which both
+    # duplicated that knowledge and, being monotonic, could only ever express
+    # "I care about this aspect more", never "I want the opposite end of it".
     preferences: Optional[List[Tuple[str, float]]] = None
     remove_seen: Optional[bool] = False
-
-# Preference scale bounds and the curve used to convert a raw [MIN_SCORE,
-# MAX_SCORE] preference into an a0_overrides weight in [0, 1].
-#
-# A linear mapping (score / MAX_SCORE) treats every one-point step as
-# equally significant, so a 4 vs 5 choice barely differs from a 1 vs 2
-# choice. Using an exponential curve instead makes higher scores pull
-# away from lower ones multiplicatively: each +1 on the scale multiplies
-# the weight by PREFERENCE_CURVE_BASE, so with base=2.0 a score of 5 ends
-# up 2**4 = 16x the weight of a score of 1, rather than just 5x.
-# Tune PREFERENCE_CURVE_BASE to taste: 1.0 reduces to linear, higher
-# values (e.g. 3.0) make only the top of the scale matter at all.
-MIN_SCORE = 1.0
-MAX_SCORE = 5.0
-PREFERENCE_CURVE_BASE = 3.0
-
-def _score_to_weight(score: float) -> float:
-    score = min(max(score, MIN_SCORE), MAX_SCORE)
-    exponent = score - MIN_SCORE
-    max_exponent = MAX_SCORE - MIN_SCORE
-    return (PREFERENCE_CURVE_BASE ** exponent) / (PREFERENCE_CURVE_BASE ** max_exponent)
+    # Weight of the review-derived prior when blending in `preferences`.
+    a0_prior_weight: Optional[float] = None
 
 @app.post("/trirank/recommendation")
 async def get_recommendation(req: RecommendationRequest):
@@ -132,15 +120,33 @@ async def get_recommendation(req: RecommendationRequest):
 
     temp_model = copy.copy(model)
     temp_model.a0_overrides = {}
+    if req.a0_prior_weight is not None:
+        temp_model.a0_prior_weight = req.a0_prior_weight
 
-    for aspect_name, score in req.preferences:
+    unknown_aspects = []
+    for aspect_name, weight in req.preferences:
         aspect_idx = train_set.sentiment.aspect_id_map.get(aspect_name, -1)
         if aspect_idx == -1:
+            unknown_aspects.append(aspect_name)
             continue
-        # Map the incoming [1, 5] preference scale to a [0, 1] weight,
-        # non-linearly so higher choices dominate lower ones instead of
-        # scaling proportionally. See _score_to_weight for the curve.
-        temp_model.a0_overrides[aspect_idx] = _score_to_weight(score)
+        temp_model.a0_overrides[aspect_idx] = min(max(float(weight), 0.0), 1.0)
+
+    # An aspect name the model has never seen used to be skipped silently, so a
+    # model trained against an older aspect vocabulary would quietly ignore every
+    # preference and return unpersonalised results that look plausible. Since the
+    # vocabulary is baked into the saved trainset, that is exactly what happens if
+    # the dataset is not re-exported and retrained after it changes, so say so.
+    if unknown_aspects:
+        print(f"[trirank] tenant {req.tenant_id}: unknown aspects ignored: {unknown_aspects}")
+    if not temp_model.a0_overrides:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"None of the requested aspects exist in the model for tenant {req.tenant_id}. "
+                f"The model was most likely trained before the aspect vocabulary changed and needs "
+                f"re-exporting and retraining. Unknown aspects: {unknown_aspects}"
+            ),
+        )
 
     response = temp_model.recommend(user_id=req.uid, k=req.k, remove_seen=req.remove_seen, train_set=train_set)
     return {"recommendations": response}
