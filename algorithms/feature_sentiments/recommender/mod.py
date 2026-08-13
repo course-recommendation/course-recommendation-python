@@ -114,8 +114,6 @@ class FSRecommender():
 
     def _generate_preference_function(self, target_sentiment_score: float) -> Callable[[float], float]:
         def preference(x: float) -> float:
-            if x >= target_sentiment_score:
-                return 1.0
             return 1.0 - abs(x - target_sentiment_score) / (5 - 1)
         return preference
 
